@@ -29,6 +29,19 @@ Underpinning my software engineering is a rigorous foundation in Penetration Tes
   },
   projects: [
     {
+      id: "atmosphere-weather-generative-art",
+      title: "Atmosphere — Weather Generative Art",
+      focus: "Visualization, Digital art",
+      image: "/assets/weather-art.jpg",
+      thumbnail: "/assets/weather-art.jpg",
+      description: "A minimalist, single-page web application that transforms live, local weather conditions into organic, generative digital art.\n\nThe page is designed with pure visual minimalism: the screen is dedicated entirely to the generative canvas.",
+      links: {
+        repo: "https://github.com/chimwemwe2003/weather-generative-art",
+        demo: "https://weather-art.web.app/"
+      },
+      tags: ["Javascript", "HTML", "CSS", "Generative Art", "Canvas API"]
+    },
+    {
       id: "pebbles",
       title: "Pebbles SOC AI Assistant",
       focus: "Agentic AI / Cybersecurity & Rapid7 MCP",
