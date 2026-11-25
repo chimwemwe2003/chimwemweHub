@@ -12,6 +12,7 @@ import {
   setDoc,
   serverTimestamp,
 } from "firebase/firestore";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBwoSjjoLr1kukW7cQHq-TVbFxjWBOQSYA",
@@ -25,6 +26,65 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
+
+// Client-side image compression
+export async function compressImage(file, maxDimension = 1920, quality = 0.85) {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      return resolve(file);
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => resolve(blob || file),
+          "image/jpeg",
+          quality
+        );
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload file: tries Firebase Storage first, falls back to Data URL
+export async function processAndUploadImage(file) {
+  try {
+    const compressedBlob = await compressImage(file);
+    const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const storageRef = ref(storage, `uploads/${Date.now()}_${cleanName}`);
+    await uploadBytes(storageRef, compressedBlob);
+    const downloadUrl = await getDownloadURL(storageRef);
+    return downloadUrl;
+  } catch (storageError) {
+    console.warn("Storage upload failed, using Data URL fallback:", storageError.message);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+}
 
 // Fetch site-wide overrides (profile, projects, certificates)
 export async function fetchSiteOverrides() {

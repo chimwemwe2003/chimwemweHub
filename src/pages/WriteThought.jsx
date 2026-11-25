@@ -10,6 +10,10 @@ import {
   FaArrowLeft,
   FaPlus,
   FaExternalLinkAlt,
+  FaUpload,
+  FaImages,
+  FaSpinner,
+  FaTimes,
 } from "react-icons/fa";
 import { useSite } from "../context/SiteContext";
 import {
@@ -17,6 +21,7 @@ import {
   fetchLiveThoughts,
   deleteThought,
   saveSiteSection,
+  processAndUploadImage,
 } from "../services/firebase";
 
 const DEFAULT_PIN = "2003";
@@ -64,15 +69,19 @@ export const WriteThought = () => {
   const [projTitle, setProjTitle] = useState("");
   const [projFocus, setProjFocus] = useState("");
   const [projImage, setProjImage] = useState("");
+  const [projGallery, setProjGallery] = useState([]);
   const [projDesc, setProjDesc] = useState("");
   const [projDemo, setProjDemo] = useState("");
   const [projRepo, setProjRepo] = useState("");
   const [projTags, setProjTags] = useState("");
+  const [uploadingProjImage, setUploadingProjImage] = useState(false);
+  const [uploadingGallery, setUploadingGallery] = useState(false);
 
   // 3. ABOUT STATE
   const [aboutName, setAboutName] = useState(data.profile?.name || "");
   const [aboutLocation, setAboutLocation] = useState(data.profile?.location || "");
   const [aboutImage, setAboutImage] = useState(data.profile?.image || "/profile-pic.jpg");
+  const [uploadingAboutImage, setUploadingAboutImage] = useState(false);
   const [aboutBio, setAboutBio] = useState(data.profile?.summary || "");
   const [aboutTags, setAboutTags] = useState(data.profile?.tags || []);
   const [newTagInput, setNewTagInput] = useState("");
@@ -203,6 +212,58 @@ export const WriteThought = () => {
     }
   };
 
+  // Upload single image (for cover / profile)
+  const handleSingleImageFile = async (e, setUrlCallback, setUploadingCallback) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCallback(true);
+    try {
+      const url = await processAndUploadImage(file);
+      setUrlCallback(url);
+      notify("success", "Image processed successfully!");
+    } catch (err) {
+      notify("error", "Failed to process image: " + err.message);
+    } finally {
+      setUploadingCallback(false);
+      e.target.value = "";
+    }
+  };
+
+  // Upload multiple images for project gallery
+  const handleMultipleGalleryFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setUploadingGallery(true);
+    try {
+      const uploadPromises = files.map(async (file) => {
+        const url = await processAndUploadImage(file);
+        return {
+          type: "image",
+          src: url,
+          caption: file.name.replace(/\.[^/.]+$/, ""),
+        };
+      });
+      const newItems = await Promise.all(uploadPromises);
+      setProjGallery((prev) => [...prev, ...newItems]);
+      notify("success", `${newItems.length} image(s) added to project gallery!`);
+    } catch (err) {
+      notify("error", "Error uploading gallery files: " + err.message);
+    } finally {
+      setUploadingGallery(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleRemoveGalleryImage = (indexToRemove) => {
+    setProjGallery((prev) => prev.filter((_, i) => i !== indexToRemove));
+  };
+
+  const handleGalleryCaptionChange = (index, newCaption) => {
+    setProjGallery((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, caption: newCaption } : item))
+    );
+  };
+
   // --- 2. PROJECTS HANDLERS ---
   const handleSaveProject = async (e) => {
     e.preventDefault();
@@ -222,6 +283,7 @@ export const WriteThought = () => {
         focus: projFocus.trim() || "Engineering / Technology",
         image: projImage.trim() || "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2000&auto=format&fit=crop",
         thumbnail: projImage.trim() || undefined,
+        gallery: projGallery.length > 0 ? projGallery : undefined,
         description: projDesc.trim(),
         links: {
           demo: projDemo.trim() || undefined,
@@ -248,6 +310,7 @@ export const WriteThought = () => {
       setProjTitle("");
       setProjFocus("");
       setProjImage("");
+      setProjGallery([]);
       setProjDesc("");
       setProjDemo("");
       setProjRepo("");
@@ -264,6 +327,7 @@ export const WriteThought = () => {
     setProjTitle(p.title || "");
     setProjFocus(p.focus || "");
     setProjImage(p.thumbnail || p.image || "");
+    setProjGallery(p.gallery || []);
     setProjDesc(p.description || "");
     setProjDemo(p.links?.demo || "");
     setProjRepo(p.links?.repo || "");
@@ -754,17 +818,126 @@ export const WriteThought = () => {
                 />
               </div>
 
+              {/* Cover Image */}
               <div>
                 <label className="block text-xs font-bold tracking-widest uppercase mb-2 text-neutral-600">
-                  Image URL / Asset Path
+                  Project Cover Image / Thumbnail
                 </label>
-                <input
-                  type="text"
-                  value={projImage}
-                  onChange={(e) => setProjImage(e.target.value)}
-                  placeholder="e.g. /assets/pebbles.png or https://images.unsplash.com/..."
-                  className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 focus:border-caa-red focus:bg-white focus:outline-none text-sm font-mono"
-                />
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-2">
+                  <div className="w-20 h-16 bg-neutral-100 border border-neutral-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                    {projImage ? (
+                      <img
+                        src={projImage}
+                        alt="Cover Preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.target.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <span className="text-[10px] text-neutral-400 font-mono">No Image</span>
+                    )}
+                  </div>
+                  <div className="flex-1 w-full space-y-2">
+                    <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-100 hover:bg-caa-red hover:text-white border border-neutral-300 transition-colors text-xs font-bold uppercase tracking-wider">
+                      {uploadingProjImage ? (
+                        <>
+                          <FaSpinner className="animate-spin" /> Processing...
+                        </>
+                      ) : (
+                        <>
+                          <FaUpload /> Choose from Device
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) =>
+                          handleSingleImageFile(e, setProjImage, setUploadingProjImage)
+                        }
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      value={projImage}
+                      onChange={(e) => setProjImage(e.target.value)}
+                      placeholder="Or enter image URL / asset path..."
+                      className="w-full px-4 py-2 bg-neutral-50 border border-neutral-200 focus:border-caa-red focus:bg-white focus:outline-none text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Multiple Gallery Images */}
+              <div className="p-4 bg-neutral-50 border border-neutral-200">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4">
+                  <div>
+                    <h3 className="text-xs font-bold tracking-widest uppercase text-neutral-800 flex items-center gap-2">
+                      <FaImages className="text-caa-red" /> Project Gallery (Multiple Pictures)
+                    </h3>
+                    <p className="text-[11px] text-neutral-500 font-mono mt-0.5">
+                      Select multiple screenshots or photos from your device at once
+                    </p>
+                  </div>
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-neutral-dark text-white hover:bg-caa-red transition-colors text-xs font-bold uppercase tracking-wider self-start sm:self-auto">
+                    {uploadingGallery ? (
+                      <>
+                        <FaSpinner className="animate-spin" /> Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaPlus /> Add Pictures from Device
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={handleMultipleGalleryFiles}
+                    />
+                  </label>
+                </div>
+
+                {/* Gallery Items Grid */}
+                {projGallery.length > 0 ? (
+                  <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {projGallery.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="relative bg-white border border-neutral-300 p-2 shadow-sm group"
+                      >
+                        <div className="aspect-video bg-neutral-100 overflow-hidden mb-2 relative">
+                          <img
+                            src={item.src}
+                            alt={item.caption || `Gallery ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGalleryImage(idx)}
+                            className="absolute top-1 right-1 w-6 h-6 bg-red-600 text-white rounded-full flex items-center justify-center text-xs opacity-80 hover:opacity-100 transition-opacity"
+                            title="Remove picture"
+                          >
+                            <FaTimes size={10} />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={item.caption || ""}
+                          onChange={(e) => handleGalleryCaptionChange(idx, e.target.value)}
+                          placeholder="Optional caption..."
+                          className="w-full px-2 py-1 text-xs border border-neutral-200 focus:outline-none focus:border-caa-red font-mono"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-400 font-mono italic text-center py-4 border border-dashed border-neutral-300">
+                    No gallery images added yet. Click &quot;Add Pictures from Device&quot; to pick multiple photos.
+                  </p>
+                )}
               </div>
 
               <div className="grid md:grid-cols-2 gap-4">
@@ -910,9 +1083,9 @@ export const WriteThought = () => {
 
             <div>
               <label className="block text-xs font-bold tracking-widest uppercase mb-2 text-neutral-600">
-                Profile Picture URL / Asset Path
+                Profile Picture
               </label>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                 <div className="w-16 h-16 bg-neutral-100 border border-neutral-300 overflow-hidden flex-shrink-0 shadow-sm">
                   <img
                     src={aboutImage || "/profile-pic.jpg"}
@@ -923,13 +1096,34 @@ export const WriteThought = () => {
                     }}
                   />
                 </div>
-                <input
-                  type="text"
-                  value={aboutImage}
-                  onChange={(e) => setAboutImage(e.target.value)}
-                  placeholder="e.g. /profile-pic.jpg or https://..."
-                  className="flex-1 px-4 py-3 bg-neutral-50 border border-neutral-200 focus:border-caa-red focus:bg-white focus:outline-none text-sm font-mono"
-                />
+                <div className="flex-1 w-full space-y-2">
+                  <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-neutral-100 hover:bg-caa-red hover:text-white border border-neutral-300 transition-colors text-xs font-bold uppercase tracking-wider">
+                    {uploadingAboutImage ? (
+                      <>
+                        <FaSpinner className="animate-spin" /> Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FaUpload /> Choose from Device
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) =>
+                        handleSingleImageFile(e, setAboutImage, setUploadingAboutImage)
+                      }
+                    />
+                  </label>
+                  <input
+                    type="text"
+                    value={aboutImage}
+                    onChange={(e) => setAboutImage(e.target.value)}
+                    placeholder="Or enter image URL / asset path..."
+                    className="w-full px-4 py-2 bg-neutral-50 border border-neutral-200 focus:border-caa-red focus:bg-white focus:outline-none text-xs font-mono"
+                  />
+                </div>
               </div>
             </div>
 
