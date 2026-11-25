@@ -78,7 +78,7 @@ export const SiteProvider = ({ children }) => {
     });
 
     // Cloud Firestore live save
-    await saveSiteSection(sectionKey, newSectionData);
+    return await saveSiteSection(sectionKey, newSectionData);
   };
 
   return (

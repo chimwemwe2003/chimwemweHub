@@ -292,12 +292,12 @@ export const WriteThought = () => {
         title: projTitle.trim(),
         focus: projFocus.trim() || "Engineering / Technology",
         image: projImage.trim() || "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=2000&auto=format&fit=crop",
-        thumbnail: projImage.trim() || undefined,
-        gallery: projGallery.length > 0 ? projGallery : undefined,
+        thumbnail: projImage.trim() || "",
+        gallery: projGallery || [],
         description: projDesc.trim(),
         links: {
-          demo: projDemo.trim() || undefined,
-          repo: projRepo.trim() || undefined,
+          demo: projDemo.trim() || "",
+          repo: projRepo.trim() || "",
         },
         tags: projTags
           .split(",")
@@ -403,7 +403,7 @@ export const WriteThought = () => {
       const newCert = {
         name: newCertName.trim(),
         issuer: newCertIssuer.trim() || "Professional Certification",
-        link: newCertLink.trim() || undefined,
+        link: newCertLink.trim() || "",
       };
       const updatedList = [newCert, ...certList];
       const updatedCertificates = {

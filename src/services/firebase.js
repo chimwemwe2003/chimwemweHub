@@ -26,6 +26,23 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
+// Deeply sanitize object so Firestore never encounters 'undefined' fields
+export function sanitizeForFirestore(val) {
+  if (val === undefined) return null;
+  if (val === null || typeof val !== "object") return val;
+  if (val instanceof Date) return val;
+  if (Array.isArray(val)) {
+    return val.filter((item) => item !== undefined).map(sanitizeForFirestore);
+  }
+  const clean = {};
+  for (const [key, value] of Object.entries(val)) {
+    if (value !== undefined) {
+      clean[key] = sanitizeForFirestore(value);
+    }
+  }
+  return clean;
+}
+
 // Instant client-side image compression that NEVER hangs
 export function processAndUploadImage(file) {
   return new Promise((resolve, reject) => {
@@ -67,12 +84,12 @@ export function processAndUploadImage(file) {
   });
 }
 
-// Fetch site-wide overrides from Firestore with quick timeout
+// Fetch site-wide overrides from Firestore
 export async function fetchSiteOverrides() {
   try {
     const fetchPromise = getDoc(doc(db, "content", "site"));
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 2000)
+      setTimeout(() => reject(new Error("Timeout")), 8000)
     );
     const docSnap = await Promise.race([fetchPromise, timeoutPromise]);
     if (docSnap && docSnap.exists()) {
@@ -84,25 +101,26 @@ export async function fetchSiteOverrides() {
   return null;
 }
 
-// Save section with timeout protection
+// Save section with sanitization and reliable timeout
 export async function saveSiteSection(sectionName, sectionData) {
   try {
+    const cleanData = sanitizeForFirestore(sectionData);
     const savePromise = setDoc(
       doc(db, "content", "site"),
       {
-        [sectionName]: sectionData,
+        [sectionName]: cleanData,
         lastUpdated: serverTimestamp(),
       },
       { merge: true }
     );
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 2500)
+      setTimeout(() => reject(new Error("Cloud request timed out")), 12000)
     );
     await Promise.race([savePromise, timeoutPromise]);
     return true;
   } catch (err) {
-    console.warn(`Cloud sync for ${sectionName}:`, err.message);
-    return false;
+    console.error(`Cloud sync for ${sectionName} error:`, err);
+    throw err;
   }
 }
 
@@ -111,7 +129,7 @@ export async function fetchLiveThoughts() {
   try {
     const q = query(collection(db, "thoughts"), orderBy("createdAt", "desc"));
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 2000)
+      setTimeout(() => reject(new Error("Timeout")), 8000)
     );
     const snapshot = await Promise.race([getDocs(q), timeoutPromise]);
     if (snapshot) {
@@ -121,12 +139,12 @@ export async function fetchLiveThoughts() {
       }));
     }
   } catch (error) {
-    // Fallback to local
+    console.warn("fetchLiveThoughts notice:", error.message);
   }
   return [];
 }
 
-// Publish thought
+// Publish thought with sanitization
 export async function publishThought({ title, category, summary, content }) {
   const words = content.trim().split(/\s+/).length;
   const readTime = `${Math.max(1, Math.ceil(words / 200))} min read`;
@@ -145,20 +163,22 @@ export async function publishThought({ title, category, summary, content }) {
     date,
   };
 
+  const cleanThought = sanitizeForFirestore({
+    ...thoughtData,
+    createdAt: serverTimestamp(),
+  });
+
   try {
-    const addPromise = addDoc(collection(db, "thoughts"), {
-      ...thoughtData,
-      createdAt: serverTimestamp(),
-    });
+    const addPromise = addDoc(collection(db, "thoughts"), cleanThought);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 2500)
+      setTimeout(() => reject(new Error("Cloud request timed out")), 12000)
     );
     const docRef = await Promise.race([addPromise, timeoutPromise]);
     if (docRef?.id) {
       thoughtData.id = docRef.id;
     }
   } catch (e) {
-    console.warn("Saving thought locally:", e.message);
+    console.error("Cloud publish thought notice:", e);
   }
 
   return thoughtData;
@@ -169,10 +189,10 @@ export async function deleteThought(thoughtId) {
   try {
     const delPromise = deleteDoc(doc(db, "thoughts", thoughtId));
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 2000)
+      setTimeout(() => reject(new Error("Cloud request timed out")), 8000)
     );
     await Promise.race([delPromise, timeoutPromise]);
   } catch (e) {
-    console.warn("Delete thought cloud note:", e.message);
+    console.warn("Delete thought cloud notice:", e.message);
   }
 }
