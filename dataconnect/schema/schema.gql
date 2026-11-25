@@ -1,0 +1,45 @@
+type User @table {
+  email: String!
+  displayName: String!
+  createdAt: Timestamp!
+  photoUrl: String
+}
+
+type Website @table {
+  user: User!
+  name: String!
+  urlSlug: String!
+  templateName: String!
+  isPublished: Boolean!
+  createdAt: Timestamp!
+  description: String
+  lastPublishedAt: Timestamp
+}
+
+type Page @table {
+  website: Website!
+  title: String!
+  slug: String!
+  order: Int!
+  createdAt: Timestamp!
+  content: String
+}
+
+type Project @table {
+  website: Website!
+  title: String!
+  description: String!
+  createdAt: Timestamp!
+  externalLink: String
+  imageUrl: String
+}
+
+type BlogPost @table {
+  website: Website!
+  title: String!
+  content: String!
+  publishedAt: Timestamp!
+  createdAt: Timestamp!
+  imageUrl: String
+  tags: [String]
+}

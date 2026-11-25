@@ -1,0 +1,1 @@
+- [x] Update src/data.js: Change profile.image from "href" to "pfp.jpg"
