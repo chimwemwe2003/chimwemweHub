@@ -1,11 +1,12 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import { portfolioData } from "../data";
-import { fetchSiteOverrides, saveSiteSection } from "../services/firebase";
+import { db, saveSiteSection } from "../services/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 const SiteContext = createContext();
 
 export const SiteProvider = ({ children }) => {
-  // 1. Initialize from local overrides immediately (0ms latency!)
+  // 1. Initialize from local storage immediately (0ms start)
   const [data, setData] = useState(() => {
     try {
       const saved = localStorage.getItem("ck_site_overrides");
@@ -26,34 +27,43 @@ export const SiteProvider = ({ children }) => {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // 2. Background sync with cloud if available
+  // 2. Real-time live listener with Cloud Firestore
   useEffect(() => {
-    async function syncCloud() {
-      try {
-        const cloudOverrides = await fetchSiteOverrides();
-        if (cloudOverrides) {
-          setData((prev) => {
-            const merged = {
-              ...prev,
-              profile: cloudOverrides.profile ? { ...prev.profile, ...cloudOverrides.profile } : prev.profile,
-              projects: cloudOverrides.projects || prev.projects,
-              certificates: cloudOverrides.certificates || prev.certificates,
-            };
-            try {
-              localStorage.setItem("ck_site_overrides", JSON.stringify(merged));
-            } catch {}
-            return merged;
-          });
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = onSnapshot(
+        doc(db, "content", "site"),
+        (docSnap) => {
+          if (docSnap.exists()) {
+            const cloudOverrides = docSnap.data();
+            setData((prev) => {
+              const merged = {
+                ...prev,
+                profile: cloudOverrides.profile ? { ...prev.profile, ...cloudOverrides.profile } : prev.profile,
+                projects: cloudOverrides.projects || prev.projects,
+                certificates: cloudOverrides.certificates || prev.certificates,
+              };
+              try {
+                localStorage.setItem("ck_site_overrides", JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
+          }
+        },
+        (error) => {
+          console.warn("Realtime listener notice:", error.message);
         }
-      } catch (err) {
-        // Fallback to local
-      }
+      );
+    } catch (err) {
+      console.warn("Realtime setup notice:", err);
     }
-    syncCloud();
+
+    return () => unsubscribe();
   }, []);
 
-  // 3. Update section: instant UI update + instant local storage + background cloud sync
+  // 3. Update section: updates state, writes to localStorage, and saves live to Cloud Firestore
   const updateSection = async (sectionKey, newSectionData) => {
+    // Immediate local update
     setData((prev) => {
       const updated = {
         ...prev,
@@ -67,8 +77,8 @@ export const SiteProvider = ({ children }) => {
       return updated;
     });
 
-    // Background cloud sync
-    saveSiteSection(sectionKey, newSectionData).catch(() => {});
+    // Cloud Firestore live save
+    await saveSiteSection(sectionKey, newSectionData);
   };
 
   return (

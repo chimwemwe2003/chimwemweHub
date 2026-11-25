@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FaTimes, FaArrowRight, FaPen } from "react-icons/fa";
+import { FaTimes, FaArrowRight } from "react-icons/fa";
 import { Link } from "react-router-dom";
 import { portfolioData } from "../data";
-import { fetchLiveThoughts } from "../services/firebase";
+import { db } from "../services/firebase";
+import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 
 export const Thoughts = () => {
   const [allThoughts, setAllThoughts] = useState(() => {
@@ -27,31 +28,41 @@ export const Thoughts = () => {
   });
   const [selectedThought, setSelectedThought] = useState(null);
 
+  // Real-time live listener for thoughts
   useEffect(() => {
-    let isMounted = true;
-    async function loadLive() {
-      try {
-        const livePosts = await fetchLiveThoughts();
-        if (isMounted && livePosts && livePosts.length > 0) {
-          setAllThoughts((prev) => {
+    let unsubscribe = () => {};
+    try {
+      const q = query(collection(db, "thoughts"), orderBy("createdAt", "desc"));
+      unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          const livePosts = snapshot.docs.map((docSnap) => ({
+            id: docSnap.id,
+            ...docSnap.data(),
+          }));
+
+          setAllThoughts(() => {
             const combined = [
               ...livePosts,
-              ...prev.filter((p) => !livePosts.some((lp) => lp.id === p.id)),
+              ...(portfolioData.thoughts || []).filter(
+                (bt) => !livePosts.some((lp) => lp.id === bt.id)
+              ),
             ];
             try {
               localStorage.setItem("ck_dynamic_thoughts", JSON.stringify(livePosts));
             } catch {}
             return combined;
           });
+        },
+        (error) => {
+          console.warn("Realtime thoughts notice:", error.message);
         }
-      } catch (err) {
-        // Fallback to local
-      }
+      );
+    } catch (err) {
+      console.warn("Setup notice:", err);
     }
-    loadLive();
-    return () => {
-      isMounted = false;
-    };
+
+    return () => unsubscribe();
   }, []);
 
   return (
