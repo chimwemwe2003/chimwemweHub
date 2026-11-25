@@ -28,62 +28,94 @@ export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// Client-side image compression
-export async function compressImage(file, maxDimension = 1920, quality = 0.85) {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith("image/")) {
-      return resolve(file);
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round((height * maxDimension) / width);
-            width = maxDimension;
-          } else {
-            width = Math.round((width * maxDimension) / height);
-            height = maxDimension;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => resolve(blob || file),
-          "image/jpeg",
-          quality
-        );
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// Upload file: tries Firebase Storage first, falls back to Data URL
+// Bulletproof image processor that NEVER hangs
 export async function processAndUploadImage(file) {
-  try {
-    const compressedBlob = await compressImage(file);
-    const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const storageRef = ref(storage, `uploads/${Date.now()}_${cleanName}`);
-    await uploadBytes(storageRef, compressedBlob);
-    const downloadUrl = await getDownloadURL(storageRef);
-    return downloadUrl;
-  } catch (storageError) {
-    console.warn("Storage upload failed, using Data URL fallback:", storageError.message);
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
+  return new Promise(async (resolve, reject) => {
+    // Hard safety timer to prevent any hanging
+    const safetyTimeout = setTimeout(() => {
+      try {
+        const fallbackReader = new FileReader();
+        fallbackReader.onload = () => resolve(fallbackReader.result);
+        fallbackReader.onerror = () => reject(new Error("Image processing timed out."));
+        fallbackReader.readAsDataURL(file);
+      } catch (e) {
+        reject(e);
+      }
+    }, 3500);
+
+    try {
+      // 1. Fast client-side canvas compression
+      const dataUrl = await new Promise((res) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const maxDim = 1280;
+              let width = img.width;
+              let height = img.height;
+              if (width > maxDim || height > maxDim) {
+                if (width > height) {
+                  height = Math.round((height * maxDim) / width);
+                  width = maxDim;
+                } else {
+                  width = Math.round((width * maxDim) / height);
+                  height = maxDim;
+                }
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressed = canvas.toDataURL("image/jpeg", 0.82);
+              res(compressed);
+            } catch (canvasErr) {
+              res(e.target.result);
+            }
+          };
+          img.onerror = () => res(e.target.result);
+          img.src = e.target.result;
+        };
+        reader.onerror = () => res(null);
+        reader.readAsDataURL(file);
+      });
+
+      if (!dataUrl) {
+        clearTimeout(safetyTimeout);
+        return reject(new Error("Unable to read image file."));
+      }
+
+      // 2. Try fast Firebase Storage upload (strict 2s timeout)
+      try {
+        const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+        const storageRef = ref(storage, `uploads/${Date.now()}_${cleanName}`);
+
+        const blobRes = await fetch(dataUrl);
+        const blob = await blobRes.blob();
+
+        const uploadTask = uploadBytes(storageRef, blob);
+        const storageTimeout = new Promise((_, r) =>
+          setTimeout(() => r(new Error("Storage timeout")), 2000)
+        );
+
+        await Promise.race([uploadTask, storageTimeout]);
+        const downloadUrl = await getDownloadURL(storageRef);
+        clearTimeout(safetyTimeout);
+        return resolve(downloadUrl);
+      } catch (storageErr) {
+        // Fall back immediately to the compressed dataUrl
+        clearTimeout(safetyTimeout);
+        return resolve(dataUrl);
+      }
+    } catch (err) {
+      clearTimeout(safetyTimeout);
+      const fallbackReader = new FileReader();
+      fallbackReader.onload = () => resolve(fallbackReader.result);
+      fallbackReader.onerror = () => reject(err);
+      fallbackReader.readAsDataURL(file);
+    }
+  });
 }
 
 // Fetch site-wide overrides (profile, projects, certificates)
