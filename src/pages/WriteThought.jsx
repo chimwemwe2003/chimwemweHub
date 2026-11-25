@@ -101,12 +101,10 @@ export const WriteThought = () => {
   const [socialEmail, setSocialEmail] = useState(data.profile?.email || "");
   const [socialGithub, setSocialGithub] = useState(data.profile?.github || "");
 
-  // Check saved session on mobile
+  // Always enforce PIN on page visit
   useEffect(() => {
-    const savedPin = localStorage.getItem("ck_manager_token");
-    if (savedPin) {
-      setIsAuthenticated(true);
-    }
+    localStorage.removeItem("ck_manager_token");
+    setIsAuthenticated(false);
   }, []);
 
   // Sync state when context data updates
@@ -138,8 +136,15 @@ export const WriteThought = () => {
 
   const loadThoughts = async () => {
     try {
+      const saved = JSON.parse(localStorage.getItem("ck_dynamic_thoughts") || "[]");
+      if (saved && saved.length > 0) {
+        setLiveThoughts(saved);
+      }
       const posts = await fetchLiveThoughts();
-      setLiveThoughts(posts);
+      if (posts && posts.length > 0) {
+        setLiveThoughts(posts);
+        localStorage.setItem("ck_dynamic_thoughts", JSON.stringify(posts));
+      }
     } catch (e) {
       console.warn("Could not load thoughts:", e);
     }
@@ -154,9 +159,7 @@ export const WriteThought = () => {
 
   const handleUnlock = (e) => {
     e.preventDefault();
-    const storedPin = localStorage.getItem("ck_user_pin") || DEFAULT_PIN;
-    if (pinInput.trim() === storedPin || pinInput.trim() === DEFAULT_PIN) {
-      localStorage.setItem("ck_manager_token", "authenticated");
+    if (pinInput.trim() === DEFAULT_PIN) {
       setIsAuthenticated(true);
       setPinError(false);
     } else {
@@ -165,7 +168,6 @@ export const WriteThought = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("ck_manager_token");
     setIsAuthenticated(false);
     setPinInput("");
   };
@@ -180,19 +182,27 @@ export const WriteThought = () => {
     setIsSubmitting(true);
     try {
       const activeCat = customCategory.trim() ? customCategory.trim() : thoughtCategory;
-      await publishThought({
+      const newThought = await publishThought({
         title: thoughtTitle.trim(),
         category: activeCat,
         summary: thoughtSummary.trim() || thoughtContent.trim().substring(0, 160) + "...",
         content: thoughtContent.trim(),
       });
+
+      // Save locally immediately
+      try {
+        const currentSaved = JSON.parse(localStorage.getItem("ck_dynamic_thoughts") || "[]");
+        const updatedSaved = [newThought, ...currentSaved.filter((t) => t.id !== newThought.id)];
+        localStorage.setItem("ck_dynamic_thoughts", JSON.stringify(updatedSaved));
+        setLiveThoughts(updatedSaved);
+      } catch {}
+
       notify("success", "Thought published live to /thoughts!");
       setThoughtTitle("");
       setThoughtSummary("");
       setThoughtContent("");
       setCustomCategory("");
       setThoughtPreviewMode(false);
-      loadThoughts();
     } catch (err) {
       notify("error", "Failed to publish: " + err.message);
     } finally {
@@ -202,13 +212,13 @@ export const WriteThought = () => {
 
   const handleDeleteThought = async (id) => {
     if (window.confirm("Delete this thought?")) {
+      deleteThought(id).catch(() => {});
+      const updated = liveThoughts.filter((t) => t.id !== id);
+      setLiveThoughts(updated);
       try {
-        await deleteThought(id);
-        setLiveThoughts((prev) => prev.filter((t) => t.id !== id));
-        notify("success", "Thought deleted.");
-      } catch (err) {
-        notify("error", err.message);
-      }
+        localStorage.setItem("ck_dynamic_thoughts", JSON.stringify(updated));
+      } catch {}
+      notify("success", "Thought deleted.");
     }
   };
 

@@ -6,7 +6,25 @@ import { portfolioData } from "../data";
 import { fetchLiveThoughts } from "../services/firebase";
 
 export const Thoughts = () => {
-  const [allThoughts, setAllThoughts] = useState(portfolioData.thoughts || []);
+  const [allThoughts, setAllThoughts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ck_dynamic_thoughts");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return [
+            ...parsed,
+            ...(portfolioData.thoughts || []).filter(
+              (bt) => !parsed.some((lp) => lp.id === bt.id)
+            ),
+          ];
+        }
+      }
+    } catch (e) {
+      console.warn("Could not parse saved thoughts:", e);
+    }
+    return portfolioData.thoughts || [];
+  });
   const [selectedThought, setSelectedThought] = useState(null);
 
   useEffect(() => {
@@ -15,17 +33,19 @@ export const Thoughts = () => {
       try {
         const livePosts = await fetchLiveThoughts();
         if (isMounted && livePosts && livePosts.length > 0) {
-          // Merge dynamic live thoughts with built-in thoughts
-          const combined = [
-            ...livePosts,
-            ...(portfolioData.thoughts || []).filter(
-              (bt) => !livePosts.some((lp) => lp.id === bt.id)
-            ),
-          ];
-          setAllThoughts(combined);
+          setAllThoughts((prev) => {
+            const combined = [
+              ...livePosts,
+              ...prev.filter((p) => !livePosts.some((lp) => lp.id === p.id)),
+            ];
+            try {
+              localStorage.setItem("ck_dynamic_thoughts", JSON.stringify(livePosts));
+            } catch {}
+            return combined;
+          });
         }
       } catch (err) {
-        console.warn("Using offline thoughts:", err);
+        // Fallback to local
       }
     }
     loadLive();
